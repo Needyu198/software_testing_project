@@ -31,3 +31,31 @@ export function isValidProductColor(product, color, catalog) {
     const match = resolveCatalogProduct(product, catalog);
     return match !== null && typeof color === 'string' && match.colors.includes(color);
 }
+
+export function getVariationStockStatus(product, size, color, catalog, inventory = variationStock) {
+    const availableStock = getCatalogStock(product, size, catalog, color, inventory);
+    return {
+        status: availableStock > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
+        availableStock,
+    };
+}
+
+// requestedQuantity is the desired total for this cart variation, not an increment.
+export function validateStockRequest({ product, size, color, requestedQuantity }, catalog, inventory = variationStock) {
+    const reject = (code, message, availableStock = null) => ({ valid: false, code, message, availableStock });
+    if (!Number.isSafeInteger(requestedQuantity) || requestedQuantity < 1) {
+        return reject('INVALID_QUANTITY', 'Quantity must be a positive whole number.');
+    }
+    const match = resolveCatalogProduct(product, catalog);
+    if (!match) return reject('INVALID_PRODUCT', 'Invalid product. Please select a product from the catalog.');
+    if (!match.sizes.includes(size)) return reject('INVALID_SIZE', 'Please select a valid size for this product.');
+    if (!match.colors.includes(color)) return reject('INVALID_COLOR', 'Please select a valid colour for this product.');
+    const availableStock = getCatalogStock(match, size, catalog, color, inventory);
+    if (availableStock === 0) {
+        return reject('OUT_OF_STOCK', 'This size and colour combination is out of stock.', availableStock);
+    }
+    if (requestedQuantity > availableStock) {
+        return reject('INSUFFICIENT_STOCK', `Maximum available quantity is ${availableStock}.`, availableStock);
+    }
+    return { valid: true, code: 'AVAILABLE', message: '', availableStock };
+}

@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { isValidDiscountSubtotal, getPromotionPeriodError, getMinimumSpendError } from './discountValidation';
 import { promotions, redeemDemoPromotion } from './promotions';
-import { resolveCatalogProduct, getCatalogStock, isValidProductColor } from './stockValidation';
+import { resolveCatalogProduct, getCatalogStock, validateStockRequest, getVariationStockStatus } from './stockValidation';
 const PRODUCTS = [
     { id: 1, name: "Velocity Run Pro", category: "Running", gender: "Men's", price: 4590, colors: ["Black/White", "Grey/Blue", "Navy/White", "Red/Black"], rating: 4.8, reviews: 126, isNew: true, isSale: false, image: "photo-1637437757614-6491c8e915b5", description: "Built for serious runners, the Velocity Run Pro delivers elite performance with its energy-return foam midsole and engineered mesh upper. Lightweight and breathable, it adapts to your stride for a smooth, responsive feel every kilometer.", sizes: [7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 12], outOfStock: [7, 11] },
     { id: 2, name: "AeroRun Elite", category: "Running", gender: "Women's", price: 5290, colors: ["White/Pink", "Black/Teal", "Lavender"], rating: 4.7, reviews: 89, isNew: true, isSale: false, image: "photo-1625860191460-10a66c7384fb", description: "The AeroRun Elite is engineered for the female athlete. Its contoured fit and lightweight construction make every run feel effortless, from morning 5Ks to marathon training.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5], outOfStock: [6] },
@@ -436,6 +436,7 @@ function ShopPage({ setPage, addToCart, setSelectedProduct, addToWishlist }) {
 function ProductDetailPage({ product, setPage, addToCart, addToWishlist }) {
     const [selectedSize, setSelectedSize] = useState(null);
     const [selectedColor, setSelectedColor] = useState(product.colors[0]);
+    const stockStatus = getVariationStockStatus(product, selectedSize, selectedColor, PRODUCTS);
     const [sizeError, setSizeError] = useState(false);
     const [activeImage, setActiveImage] = useState(0);
     const [openAccordion, setOpenAccordion] = useState('Description');
@@ -529,7 +530,7 @@ function ProductDetailPage({ product, setPage, addToCart, addToWishlist }) {
 
           {/* Stock warning */}
           <p role="status" className="text-xs font-medium mb-5 min-h-5">
-            {selectedSize === null ? <span className="text-[#6B6B6B]">Select a size to check availability</span> : <><span className={getStock(product, selectedSize, selectedColor) > 0 ? "text-green-700" : "text-red-600"}>{getStock(product, selectedSize, selectedColor) > 0 ? "● In Stock" : "Out of Stock"}</span> {getStock(product, selectedSize, selectedColor) > 0 && <span className="text-orange-700">({getStock(product, selectedSize, selectedColor)} left in this size)</span>}</>}
+            {selectedSize === null ? <span className="text-[#6B6B6B]">Select a size to check availability</span> : <><span className={stockStatus.status === 'IN_STOCK' ? "text-green-700" : "text-red-600"}>{stockStatus.status === 'IN_STOCK' ? "● In Stock" : "Out of Stock"}</span> {stockStatus.status === 'IN_STOCK' && <span className="text-orange-700">({stockStatus.availableStock} left in this size)</span>}</>}
           </p>
 
           {/* Actions */}
@@ -1648,14 +1649,10 @@ export default function App() {
             showToast('Invalid product. Please select a product from the catalog.', 'error');
             return;
         }
-        if (!isValidProductColor(product, color, PRODUCTS)) {
-            showToast('Please select a valid colour for this product.', 'error');
-            return;
-        }
-        const stock = getStock(product, size, color);
         const currentQuantity = cart.find(i => i.product.id === product.id && i.size === size && i.color === color)?.quantity ?? 0;
-        if (currentQuantity >= stock) {
-            showToast(stock === 0 ? 'This size and colour combination is out of stock.' : `Maximum available quantity is ${stock}.`, 'error');
+        const validation = validateStockRequest({ product, size, color, requestedQuantity: currentQuantity + 1 }, PRODUCTS);
+        if (!validation.valid) {
+            showToast(validation.message, 'error');
             return;
         }
         setCart(prev => {
@@ -1674,10 +1671,13 @@ export default function App() {
     };
     const updateQty = (idx, qty) => {
         const item = cart[idx];
-        if (!item || !Number.isInteger(qty) || qty < 1) return;
-        const stock = getStock(item.product, item.size, item.color);
-        if (qty > stock) {
-            showToast(`Maximum available quantity is ${stock}.`, 'error');
+        if (!item) {
+            showToast('This item is no longer in your bag.', 'error');
+            return;
+        }
+        const validation = validateStockRequest({ product: item.product, size: item.size, color: item.color, requestedQuantity: qty }, PRODUCTS);
+        if (!validation.valid) {
+            showToast(validation.message, 'error');
             return;
         }
         if (qty === item.quantity) return;
