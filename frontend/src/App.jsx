@@ -1,7 +1,11 @@
+import { formatMoney, lineTotalSatang } from './money';
 import { useState, useRef, useEffect } from 'react';
 import { isValidDiscountSubtotal, getPromotionPeriodError, getMinimumSpendError } from './discountValidation';
 import { promotions, redeemDemoPromotion } from './promotions';
-import { resolveCatalogProduct, getCatalogStock, validateStockRequest, getVariationStockStatus } from './stockValidation';
+import { getCatalogStock, validateStockRequest, getVariationStockStatus } from './stockValidation';
+import { calculatePromotionDiscount } from './discountCalculation';
+import { calculateOrderTotals } from './orderTotals';
+import { addCartItem } from './cartOperations';
 const PRODUCTS = [
     { id: 1, name: "Velocity Run Pro", category: "Running", gender: "Men's", price: 4590, colors: ["Black/White", "Grey/Blue", "Navy/White", "Red/Black"], rating: 4.8, reviews: 126, isNew: true, isSale: false, image: "photo-1637437757614-6491c8e915b5", description: "Built for serious runners, the Velocity Run Pro delivers elite performance with its energy-return foam midsole and engineered mesh upper. Lightweight and breathable, it adapts to your stride for a smooth, responsive feel every kilometer.", sizes: [7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 12], outOfStock: [7, 11] },
     { id: 2, name: "AeroRun Elite", category: "Running", gender: "Women's", price: 5290, colors: ["White/Pink", "Black/Teal", "Lavender"], rating: 4.7, reviews: 89, isNew: true, isSale: false, image: "photo-1625860191460-10a66c7384fb", description: "The AeroRun Elite is engineered for the female athlete. Its contoured fit and lightweight construction make every run feel effortless, from morning 5Ks to marathon training.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5], outOfStock: [6] },
@@ -530,7 +534,7 @@ function ProductDetailPage({ product, setPage, addToCart, addToWishlist }) {
 
           {/* Stock warning */}
           <p role="status" className="text-xs font-medium mb-5 min-h-5">
-            {selectedSize === null ? <span className="text-[#6B6B6B]">Select a size to check availability</span> : <><span className={stockStatus.status === 'IN_STOCK' ? "text-green-700" : "text-red-600"}>{stockStatus.status === 'IN_STOCK' ? "● In Stock" : "Out of Stock"}</span> {stockStatus.status === 'IN_STOCK' && <span className="text-orange-700">({stockStatus.availableStock} left in this size)</span>}</>}
+            <span className={stockStatus.status === 'SELECT_SIZE' ? 'text-[#6B6B6B]' : stockStatus.status === 'LOW_STOCK' ? 'text-orange-700' : stockStatus.status === 'IN_STOCK' ? 'text-green-700' : 'text-red-600'}>{stockStatus.message}</span>
           </p>
 
           {/* Actions */}
@@ -601,19 +605,13 @@ function ProductDetailPage({ product, setPage, addToCart, addToWishlist }) {
       </section>
     </div>);
 }
-function CartPage({ cart, setPage, updateQty, removeFromCart, showToast, redemptionSession }) {
-    const [promo, setPromo] = useState('');
-    const [promoApplied, setPromoApplied] = useState(null);
+function CartPage({ cart, setPage, updateQty, removeFromCart, showToast, redemptionSession, promoApplied, setPromoApplied, totals }) {
+    const [promo, setPromo] = useState(promoApplied ?? '');
     const [promoError, setPromoError] = useState('');
-    const subtotal = cart.reduce((s, item) => s + (item.product.salePrice ?? item.product.price) * item.quantity, 0);
+    const { subtotal, discount, shipping, total } = totals;
     const subtotalValid = isValidDiscountSubtotal(cart, subtotal);
-    const appliedPromotion = promotions.find(item => item.code === promoApplied);
-    const minimumSpendError = appliedPromotion ? getMinimumSpendError(appliedPromotion, subtotal) : '';
-    const displayedPromoError = promoError || minimumSpendError;
-    const promoEligible = Boolean(promoApplied) && subtotalValid && !minimumSpendError;
-    const discount = promoEligible && promoApplied === 'WELCOME10' ? Math.round(subtotal * 0.1) : 0;
-    const shipping = subtotal >= 2500 ? 0 : 150;
-    const total = subtotal - discount + shipping;
+    const displayedPromoError = promoError || totals.error;
+    const promoEligible = Boolean(totals.promoCode);
     const applyPromo = () => {
         if (!subtotalValid) {
             setPromoApplied(null);
@@ -644,21 +642,21 @@ function CartPage({ cart, setPage, updateQty, removeFromCart, showToast, redempt
             setPromoError(minimumError);
             return;
         }
-        if (code === 'WELCOME10') {
-            const redemptionError = redeemDemoPromotion(promotion, redemptionSession);
-            if (redemptionError) {
-                setPromoApplied(null);
-                setPromoError(redemptionError);
-                return;
-            }
-            setPromoApplied('WELCOME10');
-            setPromo('WELCOME10');
-            setPromoError('');
-        }
-        else {
-            setPromoError('Invalid discount code. Please try again.');
+        const calculation = calculatePromotionDiscount(promotion, subtotal);
+        if (calculation.error) {
             setPromoApplied(null);
+            setPromoError(calculation.error);
+            return;
         }
+        const redemptionError = redeemDemoPromotion(promotion, redemptionSession);
+        if (redemptionError) {
+            setPromoApplied(null);
+            setPromoError(redemptionError);
+            return;
+        }
+        setPromoApplied(code);
+        setPromo(code);
+        setPromoError('');
     };
     if (cart.length === 0) {
         return (<div className="max-w-[1440px] mx-auto px-6 py-20 flex flex-col items-center text-center">
@@ -688,7 +686,9 @@ function CartPage({ cart, setPage, updateQty, removeFromCart, showToast, redempt
 
       <div className="grid lg:grid-cols-3 gap-10">
         <div className="lg:col-span-2 flex flex-col gap-4">
-          {cart.map((item, idx) => (<div key={idx} className="bg-white p-5 flex gap-4">
+          {cart.map((item, idx) => {
+            const availability = getVariationStockStatus(item.product, item.size, item.color, PRODUCTS);
+            return (<div key={idx} className="bg-white p-5 flex gap-4">
               <img src={imgUrl(item.product.image, 120, 120)} alt={item.product.name} className="w-24 h-24 object-cover bg-[#F7F7F7] flex-shrink-0"/>
               <div className="flex-1">
                 <div className="flex justify-between">
@@ -696,30 +696,31 @@ function CartPage({ cart, setPage, updateQty, removeFromCart, showToast, redempt
                     <p className="font-bold text-[#111]">{item.product.name}</p>
                     <p className="text-sm text-[#6B6B6B]">{item.color} · Size {item.size}</p>
                   </div>
-                  <p className="font-bold text-[#111]">฿{((item.product.salePrice ?? item.product.price) * item.quantity).toLocaleString()}</p>
+                  <p className="font-bold text-[#111]">฿{formatMoney(lineTotalSatang(item) / 100)}</p>
                 </div>
                 <div className="flex items-center gap-4 mt-4">
                   <div className="flex items-center border border-[#E5E5E5]">
-                    <button aria-label={`Decrease quantity of ${item.product.name}`} disabled={item.quantity <= 1} onClick={() => updateQty(idx, item.quantity - 1)} className="w-8 h-8 flex items-center justify-center text-lg hover:bg-[#F7F7F7] transition-colors">−</button>
+                    <button aria-label={`Decrease quantity of ${item.product.name}`} onClick={() => { if (item.quantity === 1) removeFromCart(idx); else updateQty(idx, item.quantity - 1); }} className="w-8 h-8 flex items-center justify-center text-lg hover:bg-[#F7F7F7] transition-colors">−</button>
                     <span className="w-8 text-center text-sm">{item.quantity}</span>
                     <button aria-label={`Increase quantity of ${item.product.name}`} onClick={() => updateQty(idx, item.quantity + 1)} className="w-8 h-8 flex items-center justify-center text-lg hover:bg-[#F7F7F7] transition-colors">+</button>
                   </div>
                   <button onClick={() => removeFromCart(idx)} className="text-xs text-[#6B6B6B] hover:text-red-600 underline transition-colors">Remove</button>
                   <button onClick={() => { removeFromCart(idx); showToast('Wishlist updated.', 'success'); }} className="text-xs text-[#6B6B6B] hover:text-[#111] underline transition-colors">Move to Wishlist</button>
                 </div>
-                <p className="text-orange-700 text-xs mt-3" role="status">⚠ Only {getStock(item.product, item.size, item.color)} left in stock</p>
+                <p className={`text-xs mt-3 ${availability.status === 'LOW_STOCK' ? 'text-orange-700' : availability.status === 'IN_STOCK' ? 'text-green-700' : 'text-red-600'}`} role="status">{availability.message}</p>
               </div>
-            </div>))}
+            </div>);
+          })}
         </div>
 
         {/* Order Summary */}
         <div className="bg-white p-6 h-fit">
           <h3 className="font-display font-bold text-lg text-[#111] mb-6">Order Summary</h3>
           <div className="flex flex-col gap-3 mb-6 text-sm">
-            <div className="flex justify-between"><span className="text-[#6B6B6B]">Subtotal</span><span className="font-medium">฿{subtotal.toLocaleString()}</span></div>
-            <div className="flex justify-between"><span className="text-[#6B6B6B]">Shipping</span><span className="font-medium">{shipping === 0 ? 'FREE' : `฿${shipping}`}</span></div>
-            {discount > 0 && <div className="flex justify-between items-center gap-2 text-green-700"><span>Discount (WELCOME10)</span><span className="ml-auto">−฿{discount.toLocaleString()}</span><button aria-label="Remove discount" onClick={() => { setPromoApplied(null); setPromo(''); setPromoError(''); }} className="px-1">×</button></div>}
-            <div className="border-t border-[#E5E5E5] pt-3 flex justify-between text-base font-display font-extrabold text-[#111]"><span>Estimated Total</span><span>฿{total.toLocaleString()}</span></div>
+            <div className="flex justify-between"><span className="text-[#6B6B6B]">Subtotal</span><span className="font-medium">฿{formatMoney(subtotal)}</span></div>
+            <div className="flex justify-between"><span className="text-[#6B6B6B]">Shipping</span><span className="font-medium">{shipping === 0 ? 'FREE' : `฿${formatMoney(shipping)}`}</span></div>
+            {discount > 0 && <div className="flex justify-between items-center gap-2 text-green-700"><span>Discount ({promoApplied})</span><span className="ml-auto">−฿{formatMoney(discount)}</span><button aria-label="Remove discount" onClick={() => { setPromoApplied(null); setPromo(''); setPromoError(''); }} className="px-1">×</button></div>}
+            <div className="border-t border-[#E5E5E5] pt-3 flex justify-between text-base font-display font-extrabold text-[#111]"><span>Estimated Total</span><span>฿{formatMoney(total)}</span></div>
           </div>
 
           <div className="mb-5">
@@ -727,19 +728,19 @@ function CartPage({ cart, setPage, updateQty, removeFromCart, showToast, redempt
               <input value={promo} onChange={e => { setPromo(e.target.value); setPromoError(''); }} onKeyDown={e => { if (e.key === 'Enter') applyPromo(); }} aria-label="Promo code" aria-invalid={Boolean(displayedPromoError)} aria-describedby={displayedPromoError ? 'promo-error' : undefined} placeholder="Enter promo code" className={`min-w-0 flex-1 border ${promoEligible ? 'border-green-300' : 'border-[#E5E5E5]'} px-3 py-2.5 text-sm focus:border-[#111] transition-colors`}/>
               <button onClick={applyPromo} className="bg-[#111] text-white px-4 py-2.5 text-xs font-bold tracking-widest hover:bg-[#333] transition-colors">APPLY</button>
             </div>
-            {promoEligible && <p className="text-green-700 text-xs mt-2 font-medium">✓ WELCOME10 applied — 10% OFF</p>}
+            {promoEligible && <p className="text-green-700 text-xs mt-2 font-medium">✓ {promoApplied} applied — ฿{formatMoney(discount)} OFF</p>}
             {displayedPromoError && <p id="promo-error" role="alert" className="text-red-600 text-xs mt-2">⚠ {displayedPromoError}</p>}
           </div>
 
-          <button onClick={() => setPage('checkout')} className="w-full bg-[#111] text-white py-4 text-sm font-bold tracking-widest hover:bg-[#333] transition-colors mb-3">CHECKOUT</button>
+          <button onClick={() => { if (totals.error) { showToast(totals.error, 'error'); return; } setPage('checkout'); }} className="w-full bg-[#111] text-white py-4 text-sm font-bold tracking-widest hover:bg-[#333] transition-colors mb-3">CHECKOUT</button>
           <button onClick={() => setPage('shop')} className="w-full border border-[#E5E5E5] py-4 text-sm font-medium hover:border-[#111] transition-colors">CONTINUE SHOPPING</button>
         </div>
       </div>
     </div>);
 }
-function CheckoutPage({ setPage, cartTotal }) {
+function CheckoutPage({ setPage, totals, delivery, setDelivery, completeOrder, showToast }) {
     const [step, setStep] = useState(1);
-    const [delivery, setDelivery] = useState('standard');
+
     const [payment, setPayment] = useState('card');
     const [processing, setProcessing] = useState(false);
     const [payFailed, setPayFailed] = useState(false);
@@ -748,8 +749,7 @@ function CheckoutPage({ setPage, cartTotal }) {
     const [card, setCard] = useState({ number: '', expiry: '', cvv: '', name: '' });
     const [cardErrors, setCardErrors] = useState({});
     const steps = ['Information', 'Delivery', 'Payment', 'Review'];
-    const shipping = delivery === 'express' ? 150 : 0;
-    const total = cartTotal + shipping;
+    const { subtotal, discount, shipping, total, promoCode } = totals;
     const validateInfo = () => {
         const e = {};
         if (!form.email.match(/^[^@]+@[^@]+\.[^@]+$/))
@@ -779,10 +779,15 @@ function CheckoutPage({ setPage, cartTotal }) {
         return Object.keys(e).length === 0;
     };
     const handlePlaceOrder = () => {
+        if (totals.error) { showToast(totals.error, 'error'); return; }
+        const details = {
+            address: `${form.first} ${form.last}\n${form.address}${form.apt ? ', ' + form.apt : ''}\n${form.district}, ${form.province} ${form.postal}`,
+            payment: payment === 'card' ? `Visa ending ····${card.number.slice(-4)}` : payment === 'promptpay' ? 'PromptPay' : 'Cash on Delivery',
+        };
         setProcessing(true);
         setTimeout(() => {
             setProcessing(false);
-            setPage('confirmation');
+            completeOrder(details);
         }, 2500);
     };
     const fld = (label, key, placeholder = '') => (<div>
@@ -851,7 +856,7 @@ function CheckoutPage({ setPage, cartTotal }) {
           {step === 2 && (<div>
               <h2 className="font-display text-xl font-bold text-[#111] mb-6">Delivery Method</h2>
               {[
-                { id: 'standard', label: 'Standard Delivery', sub: '2–4 business days', price: 'FREE' },
+                { id: 'standard', label: 'Standard Delivery', sub: '2–4 business days', price: totals.subtotal >= 2500 ? 'FREE' : '฿150' },
                 { id: 'express', label: 'Express Delivery', sub: '1–2 business days', price: '฿150' },
             ].map(opt => (<label key={opt.id} className={`flex items-center gap-4 border-2 p-5 mb-3 cursor-pointer transition-colors ${delivery === opt.id ? 'border-[#111]' : 'border-[#E5E5E5] hover:border-[#C5C5C5]'}`}>
                   <input type="radio" name="delivery" value={opt.id} checked={delivery === opt.id} onChange={() => setDelivery(opt.id)} className="accent-[#111]"/>
@@ -916,7 +921,7 @@ function CheckoutPage({ setPage, cartTotal }) {
               <div className="flex flex-col gap-4">
                 {[
                 { label: 'Shipping Address', value: `${form.first} ${form.last}\n${form.address}${form.apt ? ', ' + form.apt : ''}\n${form.district}, ${form.province} ${form.postal}\n${form.country}` },
-                { label: 'Delivery', value: delivery === 'express' ? 'Express Delivery (1–2 business days) — ฿150' : 'Standard Delivery (2–4 business days) — FREE' },
+                { label: 'Delivery', value: delivery === 'express' ? 'Express Delivery (1–2 business days) — ฿150' : `Standard Delivery (2–4 business days) — ${shipping === 0 ? 'FREE' : `฿${formatMoney(shipping)}`}` },
                 { label: 'Payment', value: payment === 'card' ? `Visa ending ····${card.number.slice(-4)}` : payment === 'promptpay' ? 'PromptPay' : 'Cash on Delivery' },
             ].map(row => (<div key={row.label} className="bg-white border border-[#E5E5E5] p-4 flex justify-between gap-4">
                     <p className="text-xs font-bold tracking-widest uppercase text-[#6B6B6B] flex-shrink-0 w-28">{row.label}</p>
@@ -937,48 +942,51 @@ function CheckoutPage({ setPage, cartTotal }) {
         <div className="bg-white p-5 h-fit">
           <p className="font-bold text-xs tracking-widest uppercase mb-4">Order Summary</p>
           <div className="flex flex-col gap-2 text-sm border-b border-[#E5E5E5] pb-4 mb-4">
-            <div className="flex justify-between"><span className="text-[#6B6B6B]">Subtotal</span><span>฿{cartTotal.toLocaleString()}</span></div>
-            <div className="flex justify-between"><span className="text-[#6B6B6B]">Shipping</span><span>{shipping === 0 ? 'FREE' : `฿${shipping}`}</span></div>
+            <div className="flex justify-between"><span className="text-[#6B6B6B]">Subtotal</span><span>฿{formatMoney(subtotal)}</span></div>
+            {discount > 0 && <div className="flex justify-between text-green-700"><span>Discount ({promoCode})</span><span>−฿{formatMoney(discount)}</span></div>}
+            <div className="flex justify-between"><span className="text-[#6B6B6B]">Shipping</span><span>{shipping === 0 ? 'FREE' : `฿${formatMoney(shipping)}`}</span></div>
           </div>
-          <div className="flex justify-between font-display font-extrabold text-[#111]"><span>Total</span><span>฿{total.toLocaleString()}</span></div>
+          <div className="flex justify-between font-display font-extrabold text-[#111]"><span>Total</span><span>฿{formatMoney(total)}</span></div>
         </div>
       </div>
     </div>);
 }
-function OrderConfirmationPage({ setPage }) {
+function OrderConfirmationPage({ setPage, order }) {
+    if (!order) return null;
+    const { subtotal, discount, shipping, total, promoCode } = order.totals;
     return (<div className="max-w-3xl mx-auto px-6 py-20 text-center">
       <div className="w-16 h-16 bg-green-700 flex items-center justify-center mx-auto mb-6">
         <svg className="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7"/></svg>
       </div>
       <p className="font-display text-xs font-bold tracking-[0.3em] uppercase text-[#6B6B6B] mb-3">Thank you for shopping with SOLEVA</p>
       <h1 className="font-display text-4xl font-extrabold text-[#111] mb-4">ORDER CONFIRMED</h1>
-      <p className="text-[#6B6B6B] mb-2">Order <strong className="text-[#111]">SLV-20260822-1045</strong></p>
-      <p className="text-[#6B6B6B] mb-10">Estimated delivery: <strong className="text-[#111]">25–27 August 2026</strong></p>
+      <p className="text-[#6B6B6B] mb-2">Order <strong className="text-[#111]">{order.id}</strong></p>
+      <p className="text-[#6B6B6B] mb-10">Estimated delivery: <strong className="text-[#111]">{order.delivery === 'express' ? '1–2 business days' : '2–4 business days'}</strong></p>
 
       <div className="bg-white border border-[#E5E5E5] p-6 text-left mb-8">
         <div className="grid sm:grid-cols-3 gap-6">
           {[
-            { label: 'Delivery Address', value: 'Alex Smith\n123 Sukhumvit Rd, Apt 502\nWatthana, Bangkok 10110' },
-            { label: 'Payment Method', value: 'Visa ending ····4242' },
-            { label: 'Delivery Method', value: 'Standard Delivery\n2–4 business days\nFREE' },
+            { label: 'Delivery Address', value: order.address },
+            { label: 'Payment Method', value: order.payment },
+            { label: 'Delivery Method', value: `${order.delivery === 'express' ? 'Express Delivery' : 'Standard Delivery'}\n${shipping === 0 ? 'FREE' : `฿${formatMoney(shipping)}`}` },
         ].map(row => (<div key={row.label}>
               <p className="text-xs font-bold tracking-widest uppercase text-[#6B6B6B] mb-2">{row.label}</p>
               <p className="text-sm text-[#111] whitespace-pre-line">{row.value}</p>
             </div>))}
         </div>
-        <div className="border-t border-[#E5E5E5] mt-6 pt-6 flex gap-4">
-          <img src={imgUrl('photo-1637437757614-6491c8e915b5', 80, 80)} alt="Velocity Run Pro" className="w-16 h-16 object-cover bg-[#F7F7F7]"/>
+        {order.items.map((item, index) => (<div key={index} className="border-t border-[#E5E5E5] mt-6 pt-6 flex gap-4">
+          <img src={imgUrl(item.product.image, 80, 80)} alt={item.product.name} className="w-16 h-16 object-cover bg-[#F7F7F7]"/>
           <div className="flex-1">
-            <p className="font-bold text-sm text-[#111]">Velocity Run Pro</p>
-            <p className="text-xs text-[#6B6B6B]">Black/White · Size 9 · Qty 1</p>
+            <p className="font-bold text-sm text-[#111]">{item.product.name}</p>
+            <p className="text-xs text-[#6B6B6B]">{item.color} · Size {item.size} · Qty {item.quantity}</p>
           </div>
-          <p className="font-bold text-sm text-[#111]">฿4,590</p>
-        </div>
+          <p className="font-bold text-sm text-[#111]">฿{formatMoney(lineTotalSatang(item) / 100)}</p>
+        </div>))}
         <div className="border-t border-[#E5E5E5] mt-4 pt-4 flex flex-col gap-2 text-sm">
-          <div className="flex justify-between"><span className="text-[#6B6B6B]">Subtotal</span><span>฿4,590</span></div>
-          <div className="flex justify-between text-green-700"><span>Discount (WELCOME10)</span><span>−฿459</span></div>
-          <div className="flex justify-between"><span className="text-[#6B6B6B]">Shipping</span><span>FREE</span></div>
-          <div className="flex justify-between font-display font-extrabold text-[#111] text-base pt-2 border-t border-[#E5E5E5]"><span>Total</span><span>฿4,131</span></div>
+          <div className="flex justify-between"><span className="text-[#6B6B6B]">Subtotal</span><span>฿{formatMoney(subtotal)}</span></div>
+          {discount > 0 && <div className="flex justify-between text-green-700"><span>Discount ({promoCode})</span><span>−฿{formatMoney(discount)}</span></div>}
+          <div className="flex justify-between"><span className="text-[#6B6B6B]">Shipping</span><span>{shipping === 0 ? 'FREE' : `฿${formatMoney(shipping)}`}</span></div>
+          <div className="flex justify-between font-display font-extrabold text-[#111] text-base pt-2 border-t border-[#E5E5E5]"><span>Total</span><span>฿{formatMoney(total)}</span></div>
         </div>
       </div>
 
@@ -1632,9 +1640,13 @@ function NotFoundPage({ setPage }) {
 }
 export default function App() {
     const redemptionSession = useRef({});
+    const [promoApplied, setPromoApplied] = useState(null);
+    const [delivery, setDelivery] = useState('standard');
+    const [order, setOrder] = useState(null);
     const [page, setPage] = useState('home');
-    const [cart, setCart] = useState([]);
-    const [toasts, setToasts] = useState([]);
+    const [{ cart, toasts }, setShoppingState] = useState({ cart: [], toasts: [] });
+    const setCart = update => setShoppingState(prev => ({ ...prev, cart: update(prev.cart) }));
+    const setToasts = update => setShoppingState(prev => ({ ...prev, toasts: update(prev.toasts) }));
     const [selectedProduct, setSelectedProduct] = useState(PRODUCTS[0]);
     const toastId = useRef(0);
     const showToast = (message, type = 'success') => {
@@ -1643,28 +1655,16 @@ export default function App() {
         setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), 4000);
     };
     const dismissToast = (id) => setToasts(t => t.filter(x => x.id !== id));
-    const addToCart = (requestedProduct, size, color) => {
-        const product = resolveCatalogProduct(requestedProduct, PRODUCTS);
-        if (!product) {
-            showToast('Invalid product. Please select a product from the catalog.', 'error');
-            return;
-        }
-        const currentQuantity = cart.find(i => i.product.id === product.id && i.size === size && i.color === color)?.quantity ?? 0;
-        const validation = validateStockRequest({ product, size, color, requestedQuantity: currentQuantity + 1 }, PRODUCTS);
-        if (!validation.valid) {
-            showToast(validation.message, 'error');
-            return;
-        }
-        setCart(prev => {
-            const existing = prev.findIndex(i => i.product.id === product.id && i.size === size && i.color === color);
-            if (existing >= 0) {
-                const updated = [...prev];
-                updated[existing] = { ...updated[existing], quantity: updated[existing].quantity + 1 };
-                return updated;
-            }
-            return [...prev, { product, size, color, quantity: 1 }];
+    const addToCart = (requestedProduct, size, color, requestedQty = 1) => {
+        const id = ++toastId.current;
+        setShoppingState(prev => {
+            const result = addCartItem(prev.cart, requestedProduct, size, color, PRODUCTS, undefined, requestedQty);
+            return {
+                cart: result.cart,
+                toasts: [...prev.toasts, { id, message: result.message, type: result.type }],
+            };
         });
-        showToast('Product added to your bag.', 'success');
+        setTimeout(() => setToasts(items => items.filter(item => item.id !== id)), 4000);
     };
     const addToWishlist = (product) => {
         showToast('Wishlist updated.', 'success');
@@ -1688,7 +1688,16 @@ export default function App() {
         setCart(prev => prev.filter((_, i) => i !== idx));
         showToast('Item removed from your bag.', 'info');
     };
-    const cartTotal = cart.reduce((s, i) => s + (i.product.salePrice ?? i.product.price) * i.quantity, 0);
+    const totals = calculateOrderTotals(cart, promotions.find(p => p.code === promoApplied), delivery);
+    const completeOrder = details => {
+        const finalTotals = calculateOrderTotals(cart, promotions.find(p => p.code === promoApplied), delivery);
+        if (!cart.length || finalTotals.error) {
+            showToast(finalTotals.error || 'Your bag is empty.', 'error');
+            return;
+        }
+        setOrder({ ...details, id: `SLV-${Date.now()}`, items: structuredClone(cart), totals: { ...finalTotals }, delivery });
+        setPage('confirmation');
+    };
     const isAdmin = page === 'admin';
     useEffect(() => { window.scrollTo(0, 0); }, [page]);
     return (<div className="min-h-screen flex flex-col">
@@ -1701,9 +1710,9 @@ export default function App() {
         {page === 'home' && <HomePage setPage={setPage} addToCart={addToCart} setSelectedProduct={setSelectedProduct} addToWishlist={addToWishlist}/>}
         {page === 'shop' && <ShopPage setPage={setPage} addToCart={addToCart} setSelectedProduct={setSelectedProduct} addToWishlist={addToWishlist}/>}
         {page === 'product' && <ProductDetailPage product={selectedProduct} setPage={setPage} addToCart={addToCart} addToWishlist={addToWishlist}/>}
-        {page === 'cart' && <CartPage redemptionSession={redemptionSession.current} cart={cart} setPage={setPage} updateQty={updateQty} removeFromCart={removeFromCart} showToast={showToast}/>}
-        {page === 'checkout' && <CheckoutPage setPage={setPage} cartTotal={cartTotal} showToast={showToast}/>}
-        {page === 'confirmation' && <OrderConfirmationPage setPage={setPage}/>}
+        {page === 'cart' && <CartPage totals={totals} promoApplied={promoApplied} setPromoApplied={setPromoApplied} redemptionSession={redemptionSession.current} cart={cart} setPage={setPage} updateQty={updateQty} removeFromCart={removeFromCart} showToast={showToast}/>}
+        {page === 'checkout' && <CheckoutPage setPage={setPage} totals={totals} delivery={delivery} setDelivery={setDelivery} completeOrder={completeOrder} showToast={showToast}/>}
+        {page === 'confirmation' && <OrderConfirmationPage setPage={setPage} order={order}/>}
         {page === 'login' && <LoginPage setPage={setPage}/>}
         {page === 'register' && <RegisterPage setPage={setPage}/>}
         {page === 'account' && <AccountPage setPage={setPage}/>}

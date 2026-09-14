@@ -32,12 +32,30 @@ export function isValidProductColor(product, color, catalog) {
     return match !== null && typeof color === 'string' && match.colors.includes(color);
 }
 
-export function getVariationStockStatus(product, size, color, catalog, inventory = variationStock) {
-    const availableStock = getCatalogStock(product, size, catalog, color, inventory);
-    return {
-        status: availableStock > 0 ? 'IN_STOCK' : 'OUT_OF_STOCK',
-        availableStock,
-    };
+export const LOW_STOCK_THRESHOLD = 3;
+export const MAX_CART_QUANTITY = 20;
+
+export function getVariationStockStatus(product, size, color, catalog, inventory = variationStock, lowStockThreshold = LOW_STOCK_THRESHOLD) {
+    if (!Number.isSafeInteger(lowStockThreshold) || lowStockThreshold < 0) {
+        throw new RangeError('Low-stock threshold must be a nonnegative whole number.');
+    }
+    const result = (status, message, availableStock = null) => ({ status, message, availableStock });
+    const match = resolveCatalogProduct(product, catalog);
+    if (!match) return result('INVALID_PRODUCT', 'Invalid product. Please select a product from the catalog.');
+    if (size == null) return result('SELECT_SIZE', 'Select a size to check availability');
+    if (!match.sizes.includes(size)) return result('INVALID_SIZE', 'Please select a valid size for this product.');
+    if (!match.colors.includes(color)) return result('INVALID_COLOR', 'Please select a valid colour for this product.');
+    const variation = inventory.find(item => item.productId === match.id && item.size === size && item.color === color);
+    if (!variation) return result('VARIATION_UNAVAILABLE', 'This size and colour combination is unavailable.', 0);
+    if (!Number.isSafeInteger(variation.stock) || variation.stock < 0) {
+        return result('INVALID_STOCK', 'Stock information is unavailable. Please try another variation.');
+    }
+    const availableStock = variation.stock;
+    if (availableStock === 0) return result('OUT_OF_STOCK', 'This size and colour combination is out of stock.', 0);
+    if (availableStock <= lowStockThreshold) {
+        return result('LOW_STOCK', `Low Stock — Only ${availableStock} left in stock`, availableStock);
+    }
+    return result('IN_STOCK', `In Stock — ${availableStock} available`, availableStock);
 }
 
 // requestedQuantity is the desired total for this cart variation, not an increment.
@@ -46,16 +64,16 @@ export function validateStockRequest({ product, size, color, requestedQuantity }
     if (!Number.isSafeInteger(requestedQuantity) || requestedQuantity < 1) {
         return reject('INVALID_QUANTITY', 'Quantity must be a positive whole number.');
     }
-    const match = resolveCatalogProduct(product, catalog);
-    if (!match) return reject('INVALID_PRODUCT', 'Invalid product. Please select a product from the catalog.');
-    if (!match.sizes.includes(size)) return reject('INVALID_SIZE', 'Please select a valid size for this product.');
-    if (!match.colors.includes(color)) return reject('INVALID_COLOR', 'Please select a valid colour for this product.');
-    const availableStock = getCatalogStock(match, size, catalog, color, inventory);
-    if (availableStock === 0) {
-        return reject('OUT_OF_STOCK', 'This size and colour combination is out of stock.', availableStock);
+    const availability = getVariationStockStatus(product, size, color, catalog, inventory);
+    if (!['IN_STOCK', 'LOW_STOCK'].includes(availability.status)) {
+        return reject(availability.status, availability.message, availability.availableStock);
     }
-    if (requestedQuantity > availableStock) {
-        return reject('INSUFFICIENT_STOCK', `Maximum available quantity is ${availableStock}.`, availableStock);
+    const { availableStock } = availability;
+    const effectiveMax = Math.min(MAX_CART_QUANTITY, availableStock);
+    if (requestedQuantity > effectiveMax) {
+        return availableStock > MAX_CART_QUANTITY
+            ? reject('QUANTITY_LIMIT', `Maximum quantity per size and colour is ${MAX_CART_QUANTITY}.`, availableStock)
+            : reject('INSUFFICIENT_STOCK', `Maximum available quantity is ${availableStock}.`, availableStock);
     }
     return { valid: true, code: 'AVAILABLE', message: '', availableStock };
 }

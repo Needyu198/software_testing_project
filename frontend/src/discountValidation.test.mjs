@@ -8,7 +8,7 @@ const start = Date.parse(promotion.startsAt);
 const end = Date.parse(promotion.endsAt);
 
 test('minimum spend rejects below threshold and accepts exact or higher subtotal', () => {
-    assert.equal(getMinimumSpendError(promotion, 1499.99), 'Minimum purchase of ฿1,500 is required for this discount code.');
+    assert.equal(getMinimumSpendError(promotion, 1499.99), 'Minimum purchase of ฿1,500.00 is required for this discount code.');
     assert.equal(getMinimumSpendError(promotion, 1500), '');
     assert.equal(getMinimumSpendError(promotion, 1500.01), '');
     assert.equal(getMinimumSpendError(promotion, 0).length > 0, true);

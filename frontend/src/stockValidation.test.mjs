@@ -11,16 +11,40 @@ const inventory = [
 
 const request = { product, size: 7.5, color: 'Black', requestedQuantity: 1 };
 
-test('IN_STOCK requires positive stock in the selected variation', () => {
-    for (const stock of [1, 3, 8]) {
+test('business maximum applies when variation stock exceeds 20', () => {
+    const abundantInventory = [{ productId: 1, size: 7.5, color: 'Black', stock: 50 }];
+    for (const requestedQuantity of [1, 19, 20]) {
+        assert.equal(validateStockRequest({ ...request, requestedQuantity }, catalog, abundantInventory).valid, true);
+    }
+    for (const requestedQuantity of [21, 50, 51]) {
+        const result = validateStockRequest({ ...request, requestedQuantity }, catalog, abundantInventory);
+        assert.equal(result.valid, false);
+        assert.equal(result.code, 'QUANTITY_LIMIT');
+        assert.equal(result.availableStock, 50);
+        assert.equal(result.message, 'Maximum quantity per size and colour is 20.');
+    }
+});
+
+test('effective maximum uses stock when stock is below or equal to 20', () => {
+    for (const stock of [1, 5, 19, 20]) {
+        const records = [{ productId: 1, size: 7.5, color: 'Black', stock }];
+        assert.equal(validateStockRequest({ ...request, requestedQuantity: stock }, catalog, records).valid, true);
+        const result = validateStockRequest({ ...request, requestedQuantity: stock + 1 }, catalog, records);
+        assert.equal(result.valid, false);
+        assert.equal(result.code, 'INSUFFICIENT_STOCK');
+    }
+});
+
+test('stock status distinguishes zero, low and normal inventory', () => {
+    for (const stock of [1, 2, 3, 4, 8]) {
         assert.deepEqual(getVariationStockStatus(product, 7.5, 'Black', catalog,
             [{ productId: 1, size: 7.5, color: 'Black', stock }]),
-        { status: 'IN_STOCK', availableStock: stock });
+        { status: stock <= 3 ? 'LOW_STOCK' : 'IN_STOCK', availableStock: stock, message: stock <= 3 ? `Low Stock — Only ${stock} left in stock` : `In Stock — ${stock} available` });
     }
     assert.deepEqual(getVariationStockStatus(product, 7, 'Black', catalog, inventory),
-        { status: 'OUT_OF_STOCK', availableStock: 0 });
-    assert.equal(getVariationStockStatus(product, 7.5, 'Red', catalog, inventory).status, 'OUT_OF_STOCK');
-    assert.equal(getVariationStockStatus(product, 7.5, 'Black', catalog, []).status, 'OUT_OF_STOCK');
+        { status: 'OUT_OF_STOCK', availableStock: 0, message: 'This size and colour combination is out of stock.' });
+    assert.equal(getVariationStockStatus(product, 7.5, 'Red', catalog, inventory).status, 'INVALID_COLOR');
+    assert.equal(getVariationStockStatus(product, 7.5, 'Black', catalog, []).status, 'VARIATION_UNAVAILABLE');
 });
 
 test('stock requests reject nonpositive, fractional, nonnumeric and unsafe quantities', () => {
@@ -110,4 +134,41 @@ test('uses catalog values rather than supplied prices or stock data', () => {
     assert.equal(resolveCatalogProduct(altered, catalog).price, 1500);
     assert.equal(getCatalogStock(altered, 7, catalog, 'Black', inventory), 0);
     assert.equal(getCatalogStock(altered, 99, catalog, 'Black', inventory), 0);
+});
+
+
+test('low-stock threshold is configurable, including zero', () => {
+    assert.equal(getVariationStockStatus(product, 7.5, 'Black', catalog, inventory, 2).status, 'IN_STOCK');
+    assert.equal(getVariationStockStatus(product, 7.5, 'Black', catalog, inventory, 3).status, 'LOW_STOCK');
+    assert.equal(getVariationStockStatus(product, 7.5, 'Black', catalog, inventory, 5).status, 'LOW_STOCK');
+    assert.equal(getVariationStockStatus(product, 7.5, 'Black', catalog, inventory, 0).status, 'IN_STOCK');
+    assert.equal(getVariationStockStatus(product, 7, 'Black', catalog, inventory, 5).status, 'OUT_OF_STOCK');
+    for (const threshold of [-1, 1.5, NaN, Infinity, '3']) {
+        assert.throws(() => getVariationStockStatus(product, 7.5, 'Black', catalog, inventory, threshold), RangeError);
+    }
+});
+
+
+test('availability returns distinct messages that request validation reuses', () => {
+    const cases = [
+        [{ product: null }, inventory, 'INVALID_PRODUCT'],
+        [{ size: null }, inventory, 'SELECT_SIZE'],
+        [{ size: 99 }, inventory, 'INVALID_SIZE'],
+        [{ color: 'Red' }, inventory, 'INVALID_COLOR'],
+        [{}, [], 'VARIATION_UNAVAILABLE'],
+        [{}, [{ productId: 1, size: 7.5, color: 'Black', stock: -1 }], 'INVALID_STOCK'],
+        [{ size: 7 }, inventory, 'OUT_OF_STOCK'],
+    ];
+    const messages = new Set();
+    for (const [override, records, expected] of cases) {
+        const input = { ...request, ...override };
+        const status = getVariationStockStatus(input.product, input.size, input.color, catalog, records);
+        assert.equal(status.status, expected);
+        assert.ok(status.message);
+        messages.add(status.message);
+        const validation = validateStockRequest(input, catalog, records);
+        assert.equal(validation.valid, false);
+        assert.equal(validation.message, status.message);
+    }
+    assert.equal(messages.size, cases.length);
 });

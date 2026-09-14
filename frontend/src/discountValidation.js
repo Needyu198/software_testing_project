@@ -1,3 +1,4 @@
+import { toSatang, formatMoney } from './money.js';
 export function getMinimumSpendError(promotion, subtotal) {
     if (!Number.isFinite(subtotal) || subtotal < 0) {
         return 'Invalid order subtotal. Please check your cart before applying a discount.';
@@ -5,8 +6,11 @@ export function getMinimumSpendError(promotion, subtotal) {
     if (!Number.isFinite(promotion.minSpend) || promotion.minSpend < 0) {
         return 'This discount code has an invalid minimum purchase amount.';
     }
-    if (subtotal < promotion.minSpend) {
-        return `Minimum purchase of ฿${promotion.minSpend.toLocaleString('en-US')} is required for this discount code.`;
+    let belowMinimum;
+    try { belowMinimum = toSatang(subtotal) < toSatang(promotion.minSpend); }
+    catch { return 'Invalid minimum purchase amount or subtotal precision.'; }
+    if (belowMinimum) {
+        return `Minimum purchase of ฿${formatMoney(promotion.minSpend)} is required for this discount code.`;
     }
     return '';
 }
