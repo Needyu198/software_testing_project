@@ -22,7 +22,7 @@ test('zero limits and counts already above limit reject without mutation', () =>
 });
 
 test('invalid counts and limits reject without mutation', () => {
-    for (const value of [-1, 0.5, NaN, Infinity, '500', undefined]) {
+    for (const value of [-1, 0.5, NaN, Infinity, '500', '', false]) {
         for (const field of ['redemptionCount', 'redemptionLimit']) {
             const promotion = { redemptionCount: 0, redemptionLimit: 500, [field]: value };
             const before = { ...promotion };
@@ -30,6 +30,25 @@ test('invalid counts and limits reject without mutation', () => {
             assert.deepEqual(promotion, before);
         }
     }
+});
+
+test('null and omitted limits allow redemptions while counting once per session', () => {
+    for (const promotion of [{ redemptionCount: 150, redemptionLimit: null }, { redemptionCount: 150 }]) {
+        const session = {};
+        assert.equal(redeemDemoPromotion(promotion, session), '');
+        assert.equal(promotion.redemptionCount, 151);
+        assert.equal(redeemDemoPromotion(promotion, session), '');
+        assert.equal(promotion.redemptionCount, 151);
+        assert.equal(redeemDemoPromotion(promotion, {}), '');
+        assert.equal(promotion.redemptionCount, 152);
+    }
+});
+
+test('unlimited usage still rejects missing counts and prevents numeric overflow', () => {
+    assert.equal(redeemDemoPromotion({ redemptionLimit: null }, {}), 'This discount code has invalid redemption limits.');
+    const promotion = { redemptionCount: Number.MAX_SAFE_INTEGER, redemptionLimit: null };
+    assert.match(redeemDemoPromotion(promotion, {}), /precision/);
+    assert.equal(promotion.redemptionCount, Number.MAX_SAFE_INTEGER);
 });
 
 test('repeated application in one session counts once per promotion', () => {

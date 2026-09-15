@@ -1,24 +1,25 @@
 import { formatMoney, lineTotalSatang } from './money';
 import { useState, useRef, useEffect } from 'react';
-import { isValidDiscountSubtotal, getPromotionPeriodError, getMinimumSpendError } from './discountValidation';
+import { isValidDiscountSubtotal, getPromotionPeriodError, getMinimumSpendError, getDiscountAmountError, validateDiscountCodeInput } from './discountValidation';
 import { promotions, redeemDemoPromotion } from './promotions';
-import { getCatalogStock, validateStockRequest, getVariationStockStatus } from './stockValidation';
+import { getCatalogStock, getVariationStockStatus } from './stockValidation';
 import { calculatePromotionDiscount } from './discountCalculation';
 import { calculateOrderTotals } from './orderTotals';
-import { addCartItem } from './cartOperations';
+import { addCartItem, updateCartQuantity } from './cartOperations';
+import { validateOrderStock } from './orderStockValidation';
 const PRODUCTS = [
-    { id: 1, name: "Velocity Run Pro", category: "Running", gender: "Men's", price: 4590, colors: ["Black/White", "Grey/Blue", "Navy/White", "Red/Black"], rating: 4.8, reviews: 126, isNew: true, isSale: false, image: "photo-1637437757614-6491c8e915b5", description: "Built for serious runners, the Velocity Run Pro delivers elite performance with its energy-return foam midsole and engineered mesh upper. Lightweight and breathable, it adapts to your stride for a smooth, responsive feel every kilometer.", sizes: [7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 12], outOfStock: [7, 11] },
-    { id: 2, name: "AeroRun Elite", category: "Running", gender: "Women's", price: 5290, colors: ["White/Pink", "Black/Teal", "Lavender"], rating: 4.7, reviews: 89, isNew: true, isSale: false, image: "photo-1625860191460-10a66c7384fb", description: "The AeroRun Elite is engineered for the female athlete. Its contoured fit and lightweight construction make every run feel effortless, from morning 5Ks to marathon training.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5], outOfStock: [6] },
-    { id: 3, name: "Court Vision Pro", category: "Basketball", gender: "Men's", price: 5590, salePrice: 3990, colors: ["Black/White", "White/Gold"], rating: 4.6, reviews: 54, isNew: false, isSale: true, image: "photo-1469395446868-fb6a048d5ca3", description: "Dominate the court with the Court Vision Pro. Its high-top silhouette provides superior ankle support while the responsive cushioning keeps you explosive on every play.", sizes: [7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 12, 13], outOfStock: [13] },
-    { id: 4, name: "Streetline 90", category: "Lifestyle", gender: "Men's", price: 3290, colors: ["White", "Black", "Cream/Gum", "Forest"], rating: 4.5, reviews: 203, isNew: false, isSale: false, image: "photo-1610664676282-55c8de64f746", description: "Classic silhouette meets modern comfort. The Streetline 90 is the everyday essential that pairs with anything in your wardrobe. Clean lines, premium materials, all-day wearability.", sizes: [7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 12], outOfStock: [] },
-    { id: 5, name: "Motion Flex Trainer", category: "Training", gender: "Women's", price: 3290, salePrice: 2290, colors: ["Pink/White", "Black/White", "Mint"], rating: 4.4, reviews: 71, isNew: false, isSale: true, image: "photo-1604563906225-598785ab66ca", description: "From HIIT to yoga, the Motion Flex Trainer adapts to every workout. Its flexible sole and supportive midsole give you stability for lifting and agility for cardio.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9], outOfStock: [6.5] },
-    { id: 6, name: "Urban Step", category: "Lifestyle", gender: "Unisex", price: 2490, colors: ["White", "Black", "Olive", "Tan"], rating: 4.6, reviews: 158, isNew: true, isSale: false, image: "photo-1499692526241-33b38bd6c2df", description: "The Urban Step is your city companion. Minimal, clean, and comfortable — designed for streets, cafes, and everything in between.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 12], outOfStock: [] },
-    { id: 7, name: "TrailForce GTX", category: "Running", gender: "Men's", price: 6490, colors: ["Grey/Orange", "Black/Red"], rating: 4.9, reviews: 47, isNew: true, isSale: false, image: "photo-1611080027147-a1a0b6e05168", description: "Gore-Tex waterproof construction meets aggressive trail traction. The TrailForce GTX handles mud, roots, and rocks so you can focus on the run ahead.", sizes: [7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 12], outOfStock: [12] },
-    { id: 8, name: "Cloud Runner X", category: "Running", gender: "Women's", price: 4590, colors: ["White/Sky", "Rose/White", "Charcoal"], rating: 4.7, reviews: 93, isNew: false, isSale: false, image: "photo-1637437411360-b4607d62ddd3", description: "Ultra-lightweight cloud foam cushioning absorbs impact and returns energy with every step. The Cloud Runner X makes long distances feel shorter.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10], outOfStock: [] },
-    { id: 9, name: "Elevate Basketball Pro", category: "Basketball", gender: "Men's", price: 5990, salePrice: 4290, colors: ["Red/Black", "White/Blue"], rating: 4.5, reviews: 38, isNew: false, isSale: true, image: "photo-1610664676996-84b489284b95", description: "Explosive cushioning and a lockdown fit make the Elevate Basketball Pro your edge on the hardwood. Full-length cushioning, wide base, maximum stability.", sizes: [8, 8.5, 9, 9.5, 10, 10.5, 11, 12, 13], outOfStock: [8] },
-    { id: 10, name: "Everyday Classic", category: "Lifestyle", gender: "Women's", price: 2490, colors: ["White", "Blush", "Navy", "Black"], rating: 4.8, reviews: 312, isNew: false, isSale: false, image: "photo-1637437411826-bab0dc76a310", description: "Timeless silhouette, everyday comfort. The Everyday Classic is the shoe you will reach for again and again. Soft leather upper, cushioned insole, effortlessly versatile.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5], outOfStock: [] },
-    { id: 11, name: "Sprint Zero", category: "Running", gender: "Men's", price: 3990, colors: ["Yellow/Black", "White/Black"], rating: 4.3, reviews: 61, isNew: false, isSale: false, image: "photo-1786379582231-f4a593cacf2d", description: "Speed-focused lightweight racer designed for tempo runs and race days. Stripped-back construction, incredible ground feel, and a snug sock-like fit.", sizes: [7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5], outOfStock: [] },
-    { id: 12, name: "Aero Trainer", category: "Training", gender: "Unisex", price: 2990, colors: ["Black", "White/Grey", "Blue"], rating: 4.5, reviews: 44, isNew: true, isSale: false, image: "photo-1676767720609-c76265fb3074", description: "Versatile cross-trainer built for gym sessions, classes, and active days. Stable base, breathable upper, and easy on/off design.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11], outOfStock: [6.5, 9.5] },
+    { id: 1, isActive: true, name: "Velocity Run Pro", category: "Running", gender: "Men's", price: 4590, colors: ["Black/White", "Grey/Blue", "Navy/White", "Red/Black"], rating: 4.8, reviews: 126, isNew: true, isSale: false, image: "photo-1637437757614-6491c8e915b5", description: "Built for serious runners, the Velocity Run Pro delivers elite performance with its energy-return foam midsole and engineered mesh upper. Lightweight and breathable, it adapts to your stride for a smooth, responsive feel every kilometer.", sizes: [7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 12], outOfStock: [7, 11] },
+    { id: 2, isActive: true, name: "AeroRun Elite", category: "Running", gender: "Women's", price: 5290, colors: ["White/Pink", "Black/Teal", "Lavender"], rating: 4.7, reviews: 89, isNew: true, isSale: false, image: "photo-1625860191460-10a66c7384fb", description: "The AeroRun Elite is engineered for the female athlete. Its contoured fit and lightweight construction make every run feel effortless, from morning 5Ks to marathon training.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5], outOfStock: [6] },
+    { id: 3, isActive: true, name: "Court Vision Pro", category: "Basketball", gender: "Men's", price: 5590, salePrice: 3990, colors: ["Black/White", "White/Gold"], rating: 4.6, reviews: 54, isNew: false, isSale: true, image: "photo-1469395446868-fb6a048d5ca3", description: "Dominate the court with the Court Vision Pro. Its high-top silhouette provides superior ankle support while the responsive cushioning keeps you explosive on every play.", sizes: [7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 12, 13], outOfStock: [13] },
+    { id: 4, isActive: true, name: "Streetline 90", category: "Lifestyle", gender: "Men's", price: 3290, colors: ["White", "Black", "Cream/Gum", "Forest"], rating: 4.5, reviews: 203, isNew: false, isSale: false, image: "photo-1610664676282-55c8de64f746", description: "Classic silhouette meets modern comfort. The Streetline 90 is the everyday essential that pairs with anything in your wardrobe. Clean lines, premium materials, all-day wearability.", sizes: [7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 12], outOfStock: [] },
+    { id: 5, isActive: true, name: "Motion Flex Trainer", category: "Training", gender: "Women's", price: 3290, salePrice: 2290, colors: ["Pink/White", "Black/White", "Mint"], rating: 4.4, reviews: 71, isNew: false, isSale: true, image: "photo-1604563906225-598785ab66ca", description: "From HIIT to yoga, the Motion Flex Trainer adapts to every workout. Its flexible sole and supportive midsole give you stability for lifting and agility for cardio.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9], outOfStock: [6.5] },
+    { id: 6, isActive: true, name: "Urban Step", category: "Lifestyle", gender: "Unisex", price: 2490, colors: ["White", "Black", "Olive", "Tan"], rating: 4.6, reviews: 158, isNew: true, isSale: false, image: "photo-1499692526241-33b38bd6c2df", description: "The Urban Step is your city companion. Minimal, clean, and comfortable — designed for streets, cafes, and everything in between.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 12], outOfStock: [] },
+    { id: 7, isActive: true, name: "TrailForce GTX", category: "Running", gender: "Men's", price: 6490, colors: ["Grey/Orange", "Black/Red"], rating: 4.9, reviews: 47, isNew: true, isSale: false, image: "photo-1611080027147-a1a0b6e05168", description: "Gore-Tex waterproof construction meets aggressive trail traction. The TrailForce GTX handles mud, roots, and rocks so you can focus on the run ahead.", sizes: [7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11, 12], outOfStock: [12] },
+    { id: 8, isActive: true, name: "Cloud Runner X", category: "Running", gender: "Women's", price: 4590, colors: ["White/Sky", "Rose/White", "Charcoal"], rating: 4.7, reviews: 93, isNew: false, isSale: false, image: "photo-1637437411360-b4607d62ddd3", description: "Ultra-lightweight cloud foam cushioning absorbs impact and returns energy with every step. The Cloud Runner X makes long distances feel shorter.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10], outOfStock: [] },
+    { id: 9, isActive: true, name: "Elevate Basketball Pro", category: "Basketball", gender: "Men's", price: 5990, salePrice: 4290, colors: ["Red/Black", "White/Blue"], rating: 4.5, reviews: 38, isNew: false, isSale: true, image: "photo-1610664676996-84b489284b95", description: "Explosive cushioning and a lockdown fit make the Elevate Basketball Pro your edge on the hardwood. Full-length cushioning, wide base, maximum stability.", sizes: [8, 8.5, 9, 9.5, 10, 10.5, 11, 12, 13], outOfStock: [8] },
+    { id: 10, isActive: true, name: "Everyday Classic", category: "Lifestyle", gender: "Women's", price: 2490, colors: ["White", "Blush", "Navy", "Black"], rating: 4.8, reviews: 312, isNew: false, isSale: false, image: "photo-1637437411826-bab0dc76a310", description: "Timeless silhouette, everyday comfort. The Everyday Classic is the shoe you will reach for again and again. Soft leather upper, cushioned insole, effortlessly versatile.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5], outOfStock: [] },
+    { id: 11, isActive: true, name: "Sprint Zero", category: "Running", gender: "Men's", price: 3990, colors: ["Yellow/Black", "White/Black"], rating: 4.3, reviews: 61, isNew: false, isSale: false, image: "photo-1786379582231-f4a593cacf2d", description: "Speed-focused lightweight racer designed for tempo runs and race days. Stripped-back construction, incredible ground feel, and a snug sock-like fit.", sizes: [7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5], outOfStock: [] },
+    { id: 12, isActive: true, name: "Aero Trainer", category: "Training", gender: "Unisex", price: 2990, colors: ["Black", "White/Grey", "Blue"], rating: 4.5, reviews: 44, isNew: true, isSale: false, image: "photo-1676767720609-c76265fb3074", description: "Versatile cross-trainer built for gym sessions, classes, and active days. Stable base, breathable upper, and easy on/off design.", sizes: [6, 6.5, 7, 7.5, 8, 8.5, 9, 9.5, 10, 10.5, 11], outOfStock: [6.5, 9.5] },
 ];
 // Demo inventory is resolved by product, size and colour.
 const getStock = (product, size, color) => getCatalogStock(product, size, PRODUCTS, color);
@@ -613,12 +614,24 @@ function CartPage({ cart, setPage, updateQty, removeFromCart, showToast, redempt
     const displayedPromoError = promoError || totals.error;
     const promoEligible = Boolean(totals.promoCode);
     const applyPromo = () => {
+        const amountError = getDiscountAmountError(subtotal);
+        if (amountError) {
+            setPromoApplied(null);
+            setPromoError(amountError);
+            return;
+        }
         if (!subtotalValid) {
             setPromoApplied(null);
             setPromoError('Invalid order subtotal. Please check your cart before applying a discount.');
             return;
         }
-        const code = promo.trim().toUpperCase();
+        const codeInput = validateDiscountCodeInput(promo);
+        if (codeInput.error) {
+            setPromoApplied(null);
+            setPromoError(codeInput.error);
+            return;
+        }
+        const code = codeInput.code;
         const promotion = promotions.find(item => item.code === code);
         if (!promotion) {
             setPromoApplied(null);
@@ -700,9 +713,9 @@ function CartPage({ cart, setPage, updateQty, removeFromCart, showToast, redempt
                 </div>
                 <div className="flex items-center gap-4 mt-4">
                   <div className="flex items-center border border-[#E5E5E5]">
-                    <button aria-label={`Decrease quantity of ${item.product.name}`} onClick={() => { if (item.quantity === 1) removeFromCart(idx); else updateQty(idx, item.quantity - 1); }} className="w-8 h-8 flex items-center justify-center text-lg hover:bg-[#F7F7F7] transition-colors">−</button>
+                    <button aria-label={`Decrease quantity of ${item.product.name}`} onClick={() => updateQty(item, 'decrease')} className="w-8 h-8 flex items-center justify-center text-lg hover:bg-[#F7F7F7] transition-colors">−</button>
                     <span className="w-8 text-center text-sm">{item.quantity}</span>
-                    <button aria-label={`Increase quantity of ${item.product.name}`} onClick={() => updateQty(idx, item.quantity + 1)} className="w-8 h-8 flex items-center justify-center text-lg hover:bg-[#F7F7F7] transition-colors">+</button>
+                    <button aria-label={`Increase quantity of ${item.product.name}`} onClick={() => updateQty(item, 'increase')} className="w-8 h-8 flex items-center justify-center text-lg hover:bg-[#F7F7F7] transition-colors">+</button>
                   </div>
                   <button onClick={() => removeFromCart(idx)} className="text-xs text-[#6B6B6B] hover:text-red-600 underline transition-colors">Remove</button>
                   <button onClick={() => { removeFromCart(idx); showToast('Wishlist updated.', 'success'); }} className="text-xs text-[#6B6B6B] hover:text-[#111] underline transition-colors">Move to Wishlist</button>
@@ -1543,7 +1556,7 @@ function AdminPage({ setPage }) {
                         <td className="p-4 font-mono font-bold text-[#111]">{p.code}</td>
                         <td className="p-4 text-[#111]">{p.discount}</td>
                         <td className="p-4 text-[#6B6B6B]">฿{p.minSpend.toLocaleString('en-US')}</td>
-                        <td className="p-4 text-[#6B6B6B]">{p.redemptionCount} / {p.redemptionLimit}</td>
+                        <td className="p-4 text-[#6B6B6B]">{p.redemptionCount} / {p.redemptionLimit ?? 'Unlimited'}</td>
                         <td className="p-4 text-[#6B6B6B]">{p.expires}</td>
                         <td className="p-4"><span className="text-xs px-2 py-0.5 bg-green-50 text-green-700 font-medium">{p.status}</span></td>
                         <td className="p-4">
@@ -1669,20 +1682,14 @@ export default function App() {
     const addToWishlist = (product) => {
         showToast('Wishlist updated.', 'success');
     };
-    const updateQty = (idx, qty) => {
-        const item = cart[idx];
-        if (!item) {
-            showToast('This item is no longer in your bag.', 'error');
-            return;
-        }
-        const validation = validateStockRequest({ product: item.product, size: item.size, color: item.color, requestedQuantity: qty }, PRODUCTS);
-        if (!validation.valid) {
-            showToast(validation.message, 'error');
-            return;
-        }
-        if (qty === item.quantity) return;
-        showToast('Quantity updated', 'success');
-        setCart(prev => { const u = [...prev]; u[idx] = { ...u[idx], quantity: qty }; return u; });
+    const updateQty = (item, action) => {
+        const id = ++toastId.current;
+        const selection = { productId: item?.product?.id, size: item?.size, color: item?.color };
+        setShoppingState(prev => {
+            const result = updateCartQuantity(prev.cart, selection, action, PRODUCTS);
+            return { cart: result.cart, toasts: [...prev.toasts, { id, message: result.message, type: result.type }] };
+        });
+        setTimeout(() => setToasts(items => items.filter(item => item.id !== id)), 4000);
     };
     const removeFromCart = (idx) => {
         setCart(prev => prev.filter((_, i) => i !== idx));
@@ -1690,6 +1697,11 @@ export default function App() {
     };
     const totals = calculateOrderTotals(cart, promotions.find(p => p.code === promoApplied), delivery);
     const completeOrder = details => {
+        const stockValidation = validateOrderStock(cart, PRODUCTS);
+        if (!stockValidation.valid) {
+            showToast(stockValidation.errors.map(error => error.message).join(' '), 'error');
+            return;
+        }
         const finalTotals = calculateOrderTotals(cart, promotions.find(p => p.code === promoApplied), delivery);
         if (!cart.length || finalTotals.error) {
             showToast(finalTotals.error || 'Your bag is empty.', 'error');

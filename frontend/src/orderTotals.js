@@ -1,5 +1,5 @@
 import { toSatang, lineTotalSatang } from './money.js';
-import { isValidDiscountSubtotal, getMinimumSpendError, getPromotionPeriodError } from './discountValidation.js';
+import { isValidDiscountSubtotal, getMinimumSpendError, getPromotionPeriodError, getDiscountAmountError } from './discountValidation.js';
 import { calculatePromotionDiscount } from './discountCalculation.js';
 
 export function calculateOrderTotals(cart, promotion = null, delivery = 'standard', now = Date.now()) {
@@ -17,8 +17,8 @@ export function calculateOrderTotals(cart, promotion = null, delivery = 'standar
     let discount = 0;
     let error = '';
     if (promotion) {
-        error = promotion.status !== 'Active' ? 'This discount code is inactive.'
-            : getPromotionPeriodError(promotion, now) || getMinimumSpendError(promotion, subtotal);
+        error = getDiscountAmountError(subtotal) || (promotion.status !== 'Active' ? 'This discount code is inactive.'
+            : getPromotionPeriodError(promotion, now) || getMinimumSpendError(promotion, subtotal));
         if (!error) {
             const calculation = calculatePromotionDiscount(promotion, subtotal);
             error = calculation.error;

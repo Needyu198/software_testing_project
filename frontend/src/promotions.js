@@ -4,14 +4,19 @@ const redeemedSessions = new WeakMap();
 
 export function redeemDemoPromotion(promotion, session) {
     const { redemptionCount, redemptionLimit } = promotion;
+    // null or an omitted limit explicitly represents unlimited redemptions.
+    const unlimited = redemptionLimit == null;
     if (!Number.isSafeInteger(redemptionCount) || redemptionCount < 0
-        || !Number.isSafeInteger(redemptionLimit) || redemptionLimit < 0) {
+        || (!unlimited && (!Number.isSafeInteger(redemptionLimit) || redemptionLimit < 0))) {
         return 'This discount code has invalid redemption limits.';
     }
     const redeemed = redeemedSessions.get(session);
     if (redeemed?.has(promotion)) return '';
-    if (redemptionCount >= redemptionLimit) {
+    if (!unlimited && redemptionCount >= redemptionLimit) {
         return 'This discount code has reached its redemption limit.';
+    }
+    if (redemptionCount === Number.MAX_SAFE_INTEGER) {
+        return 'This discount code redemption count exceeds supported precision.';
     }
     promotion.redemptionCount += 1;
     const updated = redeemed ?? new Set();

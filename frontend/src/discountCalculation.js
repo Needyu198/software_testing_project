@@ -7,7 +7,8 @@ export function calculatePromotionDiscount(promotion, subtotal) {
     if (!Number.isFinite(promotion.value) || promotion.value < 0) {
         return { discount: 0, error: 'This discount code has an invalid discount amount.' };
     }
-    if (!Number.isFinite(promotion.maxDiscount) || promotion.maxDiscount < 0) {
+    const hasCap = promotion.maxDiscount != null;
+    if (hasCap && (!Number.isFinite(promotion.maxDiscount) || promotion.maxDiscount < 0)) {
         return { discount: 0, error: 'This discount code has an invalid maximum discount limit.' };
     }
     try {
@@ -20,7 +21,8 @@ export function calculatePromotionDiscount(promotion, subtotal) {
     } else {
         return { discount: 0, error: 'This discount code has an unsupported discount configuration.' };
     }
-    return { discount: Math.min(amount, toSatang(promotion.maxDiscount), subtotalSatang) / 100, error: '' };
+    const capSatang = hasCap ? toSatang(promotion.maxDiscount) : subtotalSatang;
+    return { discount: Math.min(amount, capSatang, subtotalSatang) / 100, error: '' };
     } catch {
         return { discount: 0, error: 'Discount amount exceeds supported monetary precision.' };
     }

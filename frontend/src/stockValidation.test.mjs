@@ -1,8 +1,9 @@
+import { validateQuantity } from './quantityValidation.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { resolveCatalogProduct, getCatalogStock, isValidProductColor, validateStockRequest, getVariationStockStatus } from './stockValidation.js';
 
-const product = { id: 1, name: 'Test shoe', price: 1500, sizes: [7, 7.5], colors: ['Black'], outOfStock: [7] };
+const product = { id: 1, isActive: true, name: 'Test shoe', price: 1500, sizes: [7, 7.5], colors: ['Black'], outOfStock: [7] };
 const catalog = [product];
 const inventory = [
     { productId: 1, size: 7, color: 'Black', stock: 0 },
@@ -10,6 +11,19 @@ const inventory = [
 ];
 
 const request = { product, size: 7.5, color: 'Black', requestedQuantity: 1 };
+
+test('inactive catalog products are rejected even when supplied product claims to be active', () => {
+    for (const isActive of [false, undefined, 'true', 1]) {
+        const inactiveCatalog = [{ ...product, isActive }];
+        const result = validateStockRequest(request, inactiveCatalog, inventory);
+        assert.equal(result.valid, false);
+        assert.equal(result.code, 'INACTIVE_PRODUCT');
+        assert.equal(result.message, 'This product is not available for purchase.');
+        assert.equal(getCatalogStock(product, 7.5, inactiveCatalog, 'Black', inventory), 0);
+        assert.equal(getVariationStockStatus(product, 7.5, 'Black', inactiveCatalog, inventory).status, 'INACTIVE_PRODUCT');
+    }
+    assert.equal(validateStockRequest(request, catalog, inventory).valid, true);
+});
 
 test('business maximum applies when variation stock exceeds 20', () => {
     const abundantInventory = [{ productId: 1, size: 7.5, color: 'Black', stock: 50 }];
@@ -51,7 +65,7 @@ test('stock requests reject nonpositive, fractional, nonnumeric and unsafe quant
     for (const requestedQuantity of [0, -1, 1.5, NaN, Infinity, -Infinity, '1', null, undefined, true, Number.MAX_SAFE_INTEGER + 1]) {
         const result = validateStockRequest({ ...request, requestedQuantity }, catalog, inventory);
         assert.equal(result.valid, false);
-        assert.equal(result.code, 'INVALID_QUANTITY');
+        assert.equal(result.code, validateQuantity(requestedQuantity).code);
         assert.ok(result.message);
     }
 });
@@ -59,7 +73,7 @@ test('stock requests reject nonpositive, fractional, nonnumeric and unsafe quant
 test('stock request accepts minimum/exact stock and rejects one above stock', () => {
     for (const requestedQuantity of [1, 2, 3]) {
         assert.deepEqual(validateStockRequest({ ...request, requestedQuantity }, catalog, inventory),
-            { valid: true, code: 'AVAILABLE', message: '', availableStock: 3 });
+            { valid: true, code: 'AVAILABLE', message: '', productId: product.id, requestedQuantity, availableStock: 3, remainingStock: 3 - requestedQuantity });
     }
     const result = validateStockRequest({ ...request, requestedQuantity: 4 }, catalog, inventory);
     assert.equal(result.code, 'INSUFFICIENT_STOCK');
@@ -171,4 +185,20 @@ test('availability returns distinct messages that request validation reuses', ()
         assert.equal(validation.message, status.message);
     }
     assert.equal(messages.size, cases.length);
+});
+
+test('successful stock results report remaining stock without deducting inventory', () => {
+    const records = Object.freeze([Object.freeze({ productId: 1, size: 7.5, color: 'Black', stock: 10 })]);
+    const before = structuredClone(records);
+    for (const requestedQuantity of [1, 3, 10]) {
+        const result = validateStockRequest({ ...request, requestedQuantity }, catalog, records);
+        assert.equal(result.productId, 1);
+        assert.equal(result.requestedQuantity, requestedQuantity);
+        assert.equal(result.availableStock, 10);
+        assert.equal(result.remainingStock, 10 - requestedQuantity);
+        assert.deepEqual(validateStockRequest({ ...request, requestedQuantity }, catalog, records), result);
+        assert.deepEqual(records, before);
+    }
+    assert.equal(validateStockRequest({ ...request, requestedQuantity: 11 }, catalog, records).valid, false);
+    assert.deepEqual(records, before);
 });

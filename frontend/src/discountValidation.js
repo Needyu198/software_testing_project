@@ -1,4 +1,26 @@
 import { toSatang, formatMoney } from './money.js';
+export function validateDiscountCodeInput(input) {
+    if (input == null || input === '') {
+        return { code: null, error: 'Please enter a discount code' };
+    }
+    if (typeof input !== 'string' || input.trim() === '') {
+        return { code: null, error: 'Please enter a valid discount code' };
+    }
+    return { code: input.trim().toUpperCase(), error: '' };
+}
+
+// Discount input rule; general cart/money helpers still allow zero totals.
+export function getDiscountAmountError(amount) {
+    if (amount == null || (typeof amount === 'string' && amount.trim() === '')) return 'Purchase amount is required';
+    if (!Number.isFinite(amount)) return 'Purchase amount must be a number';
+    if (amount <= 0) return 'Purchase amount must be greater than zero';
+    try {
+        if (toSatang(amount) === 0) return 'Purchase amount must be greater than zero';
+    } catch {
+        return 'Purchase amount exceeds supported monetary precision';
+    }
+    return '';
+}
 export function getMinimumSpendError(promotion, subtotal) {
     if (!Number.isFinite(subtotal) || subtotal < 0) {
         return 'Invalid order subtotal. Please check your cart before applying a discount.';

@@ -44,9 +44,28 @@ test('fixed discounts respect cap, zero cap and subtotal', () => {
     }
 });
 
-test('invalid or missing caps return an error and no discount', () => {
-    for (const maxDiscount of [undefined, null, -1, NaN, Infinity, '1000']) {
+test('malformed caps return an error and no discount', () => {
+    for (const maxDiscount of [-1, NaN, Infinity, '1000', '', false]) {
         assert.deepEqual(calculatePromotionDiscount({ type: 'fixed', value: 500, maxDiscount }, 2000),
             { discount: 0, error: 'This discount code has an invalid maximum discount limit.' });
+    }
+});
+
+test('null and omitted caps support both percentage and fixed discounts', () => {
+    for (const cap of [{ maxDiscount: null }, {}]) {
+        assert.deepEqual(calculatePromotionDiscount({ type: 'percentage', value: 10, ...cap }, 20000),
+            { discount: 2000, error: '' });
+        assert.deepEqual(calculatePromotionDiscount({ type: 'fixed', value: 1500, ...cap }, 2000),
+            { discount: 1500, error: '' });
+    }
+});
+
+test('uncapped discounts still clamp to subtotal and preserve monetary precision', () => {
+    for (const cap of [{ maxDiscount: null }, {}]) {
+        for (const subtotal of [0, 100, 500]) {
+            assert.equal(calculatePromotionDiscount({ type: 'fixed', value: 500, ...cap }, subtotal).discount, subtotal);
+        }
+        assert.equal(calculatePromotionDiscount({ type: 'percentage', value: 10, ...cap }, 100.05).discount, 10.01);
+        assert.equal(calculatePromotionDiscount({ type: 'percentage', value: 100, ...cap }, 100.05).discount, 100.05);
     }
 });

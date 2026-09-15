@@ -1,4 +1,6 @@
 import { variationStock } from './variationStock.js';
+import { runReadOnlyInventoryCheck } from './inventoryIntegrity.js';
+import { validateQuantity } from './quantityValidation.js';
 
 function hasValidProductShape(product) {
     return product !== null && typeof product === 'object' && !Array.isArray(product)
@@ -22,7 +24,7 @@ export function resolveCatalogProduct(product, catalog) {
 
 export function getCatalogStock(product, size, catalog, color, inventory = variationStock) {
     const match = resolveCatalogProduct(product, catalog);
-    if (!match || !match.sizes.includes(size) || !match.colors.includes(color)) return 0;
+    if (!match || match.isActive !== true || !match.sizes.includes(size) || !match.colors.includes(color)) return 0;
     const variation = inventory.find(item => item.productId === match.id && item.size === size && item.color === color);
     return variation && Number.isSafeInteger(variation.stock) && variation.stock >= 0 ? variation.stock : 0;
 }
@@ -42,6 +44,7 @@ export function getVariationStockStatus(product, size, color, catalog, inventory
     const result = (status, message, availableStock = null) => ({ status, message, availableStock });
     const match = resolveCatalogProduct(product, catalog);
     if (!match) return result('INVALID_PRODUCT', 'Invalid product. Please select a product from the catalog.');
+    if (match.isActive !== true) return result('INACTIVE_PRODUCT', 'This product is not available for purchase.');
     if (size == null) return result('SELECT_SIZE', 'Select a size to check availability');
     if (!match.sizes.includes(size)) return result('INVALID_SIZE', 'Please select a valid size for this product.');
     if (!match.colors.includes(color)) return result('INVALID_COLOR', 'Please select a valid colour for this product.');
@@ -59,11 +62,14 @@ export function getVariationStockStatus(product, size, color, catalog, inventory
 }
 
 // requestedQuantity is the desired total for this cart variation, not an increment.
-export function validateStockRequest({ product, size, color, requestedQuantity }, catalog, inventory = variationStock) {
+export function validateStockRequest(request, catalog, inventory = variationStock) {
+    return runReadOnlyInventoryCheck(inventory, () => validateStockRequestCore(request, catalog, inventory));
+}
+
+function validateStockRequestCore({ product, size, color, requestedQuantity }, catalog, inventory) {
     const reject = (code, message, availableStock = null) => ({ valid: false, code, message, availableStock });
-    if (!Number.isSafeInteger(requestedQuantity) || requestedQuantity < 1) {
-        return reject('INVALID_QUANTITY', 'Quantity must be a positive whole number.');
-    }
+    const quantityError = validateQuantity(requestedQuantity);
+    if (quantityError) return reject(quantityError.code, quantityError.message);
     const availability = getVariationStockStatus(product, size, color, catalog, inventory);
     if (!['IN_STOCK', 'LOW_STOCK'].includes(availability.status)) {
         return reject(availability.status, availability.message, availability.availableStock);
@@ -75,5 +81,14 @@ export function validateStockRequest({ product, size, color, requestedQuantity }
             ? reject('QUANTITY_LIMIT', `Maximum quantity per size and colour is ${MAX_CART_QUANTITY}.`, availableStock)
             : reject('INSUFFICIENT_STOCK', `Maximum available quantity is ${availableStock}.`, availableStock);
     }
-    return { valid: true, code: 'AVAILABLE', message: '', availableStock };
+    return {
+        valid: true,
+        code: 'AVAILABLE',
+        message: '',
+        productId: product.id,
+        requestedQuantity,
+        availableStock,
+        // Informational only: availability checks never reserve or deduct stock.
+        remainingStock: availableStock - requestedQuantity,
+    };
 }
